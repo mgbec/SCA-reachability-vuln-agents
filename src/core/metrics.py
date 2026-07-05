@@ -1,19 +1,26 @@
-"""OpenTelemetry metrics collection for authentication and SCA operations.
+"""OpenTelemetry metrics collection with direct CloudWatch export.
 
 Provides the AuthMetrics class that instruments counters for authentication
 events and latency histograms for authentication operations and SCA analysis
-steps. Metrics are exported via the OpenTelemetry Metrics API using a
-PeriodicExportingMetricReader with 1-minute aggregation intervals.
+steps. Metrics are exported directly to CloudWatch via the OTel SDK without
+requiring a Collector sidecar.
+
+When running on AWS, uses the OTLP exporter pointed at the ADOT endpoint
+(which forwards to CloudWatch EMF). Falls back to in-memory or console
+export for local development.
 """
 
 from __future__ import annotations
 
+import logging
+import os
+
 from opentelemetry import metrics
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import (
+    InMemoryMetricReader,
     PeriodicExportingMetricReader,
 )
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 
 from src.core.constants import (
     METRICS_AGGREGATION_INTERVAL_SECONDS,
@@ -21,18 +28,39 @@ from src.core.constants import (
     MetricNames,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _create_meter_provider() -> MeterProvider:
-    """Create and configure a MeterProvider with OTLP export at 1-minute intervals.
+    """Create and configure a MeterProvider with the best available exporter.
+
+    Attempts OTLP metric export (works with ADOT layer on AWS or Collector).
+    Falls back to InMemoryMetricReader for local development/testing.
 
     Returns:
-        A configured MeterProvider with PeriodicExportingMetricReader.
+        A configured MeterProvider.
     """
-    exporter = OTLPMetricExporter()
-    reader = PeriodicExportingMetricReader(
-        exporter,
-        export_interval_millis=METRICS_AGGREGATION_INTERVAL_SECONDS * 1000,
-    )
+    # Try OTLP metric exporter (works with ADOT Lambda layer or Collector)
+    try:
+        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+
+        endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317")
+        exporter = OTLPMetricExporter(endpoint=endpoint, insecure=True)
+        reader = PeriodicExportingMetricReader(
+            exporter,
+            export_interval_millis=METRICS_AGGREGATION_INTERVAL_SECONDS * 1000,
+        )
+        logger.info(
+            "Using OTLP metric export",
+            extra={"endpoint": endpoint},
+        )
+        return MeterProvider(metric_readers=[reader])
+
+    except Exception as e:
+        logger.info(f"OTLP metric export unavailable ({e}), using in-memory reader")
+
+    # Fallback: in-memory reader (metrics accessible programmatically, no export)
+    reader = InMemoryMetricReader()
     return MeterProvider(metric_readers=[reader])
 
 
@@ -46,6 +74,9 @@ class AuthMetrics:
 
     All counters include an "AgentName" attribute/label identifying the agent
     that emitted the metric.
+
+    When deployed on AWS with the ADOT layer, metrics flow directly to
+    CloudWatch EMF without a Collector sidecar.
 
     Args:
         agent_name: The name of the agent (used as the AgentName label on all metrics).
@@ -154,67 +185,35 @@ class AuthMetrics:
     # --- Latency Histogram Recording Methods ---
 
     def record_jwt_validation_duration(self, duration_ms: float) -> None:
-        """Record JWT validation latency.
-
-        Args:
-            duration_ms: Duration of the JWT validation in milliseconds.
-        """
+        """Record JWT validation latency in milliseconds."""
         self._jwt_validation_duration.record(duration_ms, attributes=self._attributes)
 
     def record_token_retrieval_duration(self, duration_ms: float) -> None:
-        """Record OAuth token retrieval latency.
-
-        Args:
-            duration_ms: Duration of the token retrieval in milliseconds.
-        """
+        """Record OAuth token retrieval latency in milliseconds."""
         self._token_retrieval_duration.record(duration_ms, attributes=self._attributes)
 
     def record_token_refresh_duration(self, duration_ms: float) -> None:
-        """Record token refresh latency.
-
-        Args:
-            duration_ms: Duration of the token refresh in milliseconds.
-        """
+        """Record token refresh latency in milliseconds."""
         self._token_refresh_duration.record(duration_ms, attributes=self._attributes)
 
     def record_mtls_validation_duration(self, duration_ms: float) -> None:
-        """Record mTLS certificate validation latency.
-
-        Args:
-            duration_ms: Duration of the mTLS validation in milliseconds.
-        """
+        """Record mTLS certificate validation latency in milliseconds."""
         self._mtls_validation_duration.record(duration_ms, attributes=self._attributes)
 
     # --- SCA Metric Recording Methods ---
 
     def record_call_graph_duration(self, duration_ms: float) -> None:
-        """Record call graph construction latency.
-
-        Args:
-            duration_ms: Duration of the call graph build in milliseconds.
-        """
+        """Record call graph construction latency in milliseconds."""
         self._call_graph_build_duration.record(duration_ms, attributes=self._attributes)
 
     def record_vulnerabilities_analyzed(self, count: int) -> None:
-        """Record the number of vulnerabilities analyzed.
-
-        Args:
-            count: Number of vulnerabilities analyzed in this batch.
-        """
+        """Record the number of vulnerabilities analyzed."""
         self._vulnerabilities_analyzed.add(count, attributes=self._attributes)
 
     def record_reachable_vulnerabilities(self, count: int) -> None:
-        """Record the number of reachable vulnerabilities found.
-
-        Args:
-            count: Number of reachable vulnerabilities found in this batch.
-        """
+        """Record the number of reachable vulnerabilities found."""
         self._reachable_vulnerabilities.add(count, attributes=self._attributes)
 
     def record_sbom_generation_duration(self, duration_ms: float) -> None:
-        """Record SBOM generation latency.
-
-        Args:
-            duration_ms: Duration of the SBOM generation in milliseconds.
-        """
+        """Record SBOM generation latency in milliseconds."""
         self._sbom_generation_duration.record(duration_ms, attributes=self._attributes)
