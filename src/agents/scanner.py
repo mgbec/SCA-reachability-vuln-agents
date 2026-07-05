@@ -178,15 +178,30 @@ class ScanResult:
 # --- Token Vault (in-memory for demonstration) ---
 
 
+class RefreshTokenReplayError(Exception):
+    """Raised when a refresh token is presented that has already been used.
+
+    This indicates a potential token replay attack. OAuth 2.1 mandates
+    refresh token rotation and replay detection.
+    """
+
+    pass
+
+
 class TokenVault:
     """In-memory token vault simulating AgentCore Identity Token Vault.
 
     Stores OAuth tokens keyed by agent-user pairs with encryption at rest
     semantics (simulated in this implementation).
+
+    Implements refresh token rotation with replay detection per OAuth 2.1:
+    - When a refresh token is used, the new one replaces it.
+    - If the same refresh token is presented twice, it is rejected.
     """
 
     def __init__(self) -> None:
         self._tokens: dict[str, TokenInfo] = {}
+        self.used_refresh_tokens: set[str] = set()
 
     def get_token(self, agent_identity: str, user_subject: str) -> TokenInfo | None:
         """Retrieve stored token for an agent-user pair.
@@ -223,6 +238,25 @@ class TokenVault:
         """
         key = f"{agent_identity}:{user_subject}"
         self._tokens.pop(key, None)
+
+    def mark_refresh_token_used(self, refresh_token: str) -> None:
+        """Mark a refresh token as used for replay detection.
+
+        Args:
+            refresh_token: The refresh token that was just consumed.
+        """
+        self.used_refresh_tokens.add(refresh_token)
+
+    def is_refresh_token_replayed(self, refresh_token: str) -> bool:
+        """Check whether a refresh token has already been used (replay attack).
+
+        Args:
+            refresh_token: The refresh token to check.
+
+        Returns:
+            True if this token was already used, False otherwise.
+        """
+        return refresh_token in self.used_refresh_tokens
 
 
 # --- OAuth Decorator ---
@@ -928,11 +962,12 @@ class ScannerAgent:
     async def _initiate_oauth_flow(
         self, user_subject: str, scopes: list[str]
     ) -> TokenInfo:
-        """Initiate the OAuth 2.0 authorization code grant flow.
+        """Initiate the OAuth 2.1 authorization code grant flow with PKCE.
 
-        Redirects the user to GitHub's consent screen. If the user grants
-        consent, exchanges the authorization code for tokens. If consent
-        is denied, raises ConsentDeniedError.
+        Generates a PKCE code_verifier and code_challenge, redirects the user
+        to GitHub's consent screen with the challenge. If the user grants
+        consent, exchanges the authorization code (with code_verifier) for
+        tokens. If consent is denied, raises ConsentDeniedError.
 
         Args:
             user_subject: The user's subject identifier.
@@ -945,11 +980,19 @@ class ScannerAgent:
             ConsentDeniedError: If the user denies consent.
             AuthorizationError: If the code exchange fails.
         """
+        from src.core.pkce import compute_code_challenge, generate_code_verifier
+
         start_time = time.time()
 
         try:
-            # Build the authorization URL
-            auth_url = self._build_authorization_url(scopes)
+            # Generate PKCE code verifier and challenge (OAuth 2.1 mandatory)
+            code_verifier = generate_code_verifier()
+            code_challenge = compute_code_challenge(code_verifier)
+
+            # Build the authorization URL with PKCE challenge
+            auth_url = self._build_authorization_url(
+                scopes, code_challenge=code_challenge
+            )
 
             # In a real implementation, this would redirect the user to auth_url
             # and wait for the callback. Here we simulate the flow through the
@@ -961,8 +1004,10 @@ class ScannerAgent:
             if auth_code is None:
                 raise ConsentDeniedError()
 
-            # Exchange the authorization code for tokens
-            token = await self._exchange_code_for_tokens(auth_code, scopes)
+            # Exchange the authorization code for tokens (include code_verifier)
+            token = await self._exchange_code_for_tokens(
+                auth_code, scopes, code_verifier=code_verifier
+            )
 
             if self._metrics:
                 self._metrics.record_auth_success()
@@ -984,19 +1029,26 @@ class ScannerAgent:
     async def _refresh_github_token(self, refresh_token: str) -> TokenInfo:
         """Refresh a GitHub OAuth access token using the refresh token.
 
-        If the refresh token is expired or revoked, raises TokenExpiredError
-        to signal that a new authorization code grant is needed.
+        Implements OAuth 2.1 refresh token rotation: the authorization server
+        issues a new refresh token with each use, and the old refresh token
+        is marked as consumed. If the same refresh token is presented twice,
+        it is rejected as a replay attack.
 
         Args:
             refresh_token: The OAuth refresh token.
 
         Returns:
-            TokenInfo with the new access token.
+            TokenInfo with the new access token and rotated refresh token.
 
         Raises:
             TokenExpiredError: If the refresh token is expired/revoked.
+            RefreshTokenReplayError: If the refresh token was already used.
         """
         start_time = time.time()
+
+        # OAuth 2.1 replay detection: reject already-used refresh tokens
+        if self._token_vault.is_refresh_token_replayed(refresh_token):
+            raise RefreshTokenReplayError()
 
         try:
             client = await self._get_http_client()
@@ -1029,9 +1081,15 @@ class ScannerAgent:
             expires_in = data.get("expires_in", 3600)
             now = datetime.now(timezone.utc)
 
+            # OAuth 2.1: Mark the old refresh token as used (rotation)
+            self._token_vault.mark_refresh_token_used(refresh_token)
+
+            # The new refresh token replaces the old one
+            new_refresh_token = data.get("refresh_token", refresh_token)
+
             token = TokenInfo(
                 access_token=data["access_token"],
-                refresh_token=data.get("refresh_token", refresh_token),
+                refresh_token=new_refresh_token,
                 expires_at=now + timedelta(seconds=expires_in),
                 scopes=data.get("scope", "").split(","),
                 agent_identity=self._agent_arn,
@@ -1044,20 +1102,23 @@ class ScannerAgent:
 
             return token
 
-        except TokenExpiredError:
+        except (TokenExpiredError, RefreshTokenReplayError):
             raise
 
         except Exception as e:
             raise TokenExpiredError() from e
 
-    def _build_authorization_url(self, scopes: list[str]) -> str:
+    def _build_authorization_url(
+        self, scopes: list[str], *, code_challenge: str | None = None
+    ) -> str:
         """Build the GitHub OAuth authorization URL with required parameters.
 
-        Includes client_id, redirect_uri, scopes, and a state parameter
-        for CSRF protection.
+        Includes client_id, redirect_uri, scopes, state parameter for CSRF
+        protection, and PKCE code_challenge/code_challenge_method per OAuth 2.1.
 
         Args:
             scopes: List of OAuth scopes to request.
+            code_challenge: PKCE S256 code challenge (required for OAuth 2.1).
 
         Returns:
             The full authorization URL string.
@@ -1072,6 +1133,12 @@ class ScannerAgent:
             "state": str(uuid.uuid4()),  # CSRF protection
             "response_type": "code",
         }
+
+        # OAuth 2.1: PKCE is mandatory on all authorization code flows
+        if code_challenge:
+            params["code_challenge"] = code_challenge
+            params["code_challenge_method"] = "S256"
+
         return f"https://github.com/login/oauth/authorize?{urllib.parse.urlencode(params)}"
 
     async def _get_authorization_code(
@@ -1095,15 +1162,17 @@ class ScannerAgent:
         return None  # Triggers ConsentDeniedError in calling code
 
     async def _exchange_code_for_tokens(
-        self, auth_code: str, scopes: list[str]
+        self, auth_code: str, scopes: list[str], *, code_verifier: str | None = None
     ) -> TokenInfo:
         """Exchange an authorization code for access and refresh tokens.
 
         Must complete within 30 seconds of receiving the authorization code.
+        Includes the PKCE code_verifier for server-side verification per OAuth 2.1.
 
         Args:
             auth_code: The authorization code from the OAuth callback.
             scopes: The requested OAuth scopes.
+            code_verifier: PKCE code verifier for proof of possession (OAuth 2.1).
 
         Returns:
             TokenInfo with access and refresh tokens.
@@ -1114,14 +1183,20 @@ class ScannerAgent:
         client = await self._get_http_client()
 
         try:
+            data = {
+                "client_id": self._config.github_oauth_client_id,
+                "client_secret": self._config.github_oauth_client_secret,
+                "code": auth_code,
+                "redirect_uri": self._config.github_oauth_callback_url,
+            }
+
+            # OAuth 2.1: Include code_verifier for PKCE verification
+            if code_verifier:
+                data["code_verifier"] = code_verifier
+
             response = await client.post(
                 "https://github.com/login/oauth/access_token",
-                data={
-                    "client_id": self._config.github_oauth_client_id,
-                    "client_secret": self._config.github_oauth_client_secret,
-                    "code": auth_code,
-                    "redirect_uri": self._config.github_oauth_callback_url,
-                },
+                data=data,
                 headers={"Accept": "application/json"},
                 timeout=30.0,  # Must complete within 30 seconds
             )
@@ -1131,9 +1206,9 @@ class ScannerAgent:
                     "Token endpoint returned non-200 status"
                 )
 
-            data = response.json()
+            resp_data = response.json()
 
-            if "error" in data:
+            if "error" in resp_data:
                 # Do not expose internal provider details to end user
                 raise AuthorizationError(
                     "Authorization code exchange failed"
@@ -1141,14 +1216,14 @@ class ScannerAgent:
 
             from datetime import timedelta
 
-            expires_in = data.get("expires_in", 3600)
+            expires_in = resp_data.get("expires_in", 3600)
             now = datetime.now(timezone.utc)
 
             return TokenInfo(
-                access_token=data["access_token"],
-                refresh_token=data.get("refresh_token"),
+                access_token=resp_data["access_token"],
+                refresh_token=resp_data.get("refresh_token"),
                 expires_at=now + timedelta(seconds=expires_in),
-                scopes=data.get("scope", "").split(","),
+                scopes=resp_data.get("scope", "").split(","),
                 agent_identity=self._agent_arn,
             )
 

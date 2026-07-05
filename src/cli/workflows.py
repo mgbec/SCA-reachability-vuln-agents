@@ -82,6 +82,198 @@ def _display_step(step: WorkflowStep, verbose: bool) -> None:
 # --- Workflow 1: User Authentication ---
 
 
+def run_device_authorization_workflow(
+    config: dict,
+    verbose: bool,
+) -> list[WorkflowStep]:
+    """Demonstrate Device Authorization Grant (RFC 8628) for CLI authentication.
+
+    OAuth 2.1 removes ROPC (Resource Owner Password Credentials). CLI clients
+    use the Device Authorization Grant instead: request a device code, display
+    a user_code and verification_uri, and poll until the user authorizes.
+
+    Steps:
+    1. Request device code from authorization server
+    2. Display verification URI and user code to the user
+    3. Poll token endpoint until authorization is granted
+    4. JWT acquisition confirmation
+
+    Args:
+        config: Resolved CLI configuration.
+        verbose: Whether to display verbose output.
+
+    Returns:
+        List of WorkflowStep results.
+    """
+    steps: list[WorkflowStep] = []
+    cognito_endpoint = config.get("cognito_endpoint", "")
+    cognito_client_id = config.get("cognito_client_id", "")
+
+    click.echo("\n=== Workflow: Device Authorization Grant (OAuth 2.1) ===\n")
+
+    # Step 1: Request device code
+    device_auth_url = f"{cognito_endpoint}/oauth2/device_authorization"
+    step1 = WorkflowStep(
+        step_number=1,
+        stage_name="Request Device Code",
+        details="Requesting device code from authorization server",
+        verbose_data={
+            "device_authorization_endpoint": device_auth_url,
+            "client_id": cognito_client_id,
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+        },
+    )
+
+    if not cognito_endpoint or not cognito_client_id:
+        step1.success = False
+        step1.error = "Cognito endpoint or client ID not configured"
+        _display_step(step1, verbose)
+        steps.append(step1)
+        return steps
+
+    device_code = None
+    user_code = None
+    verification_uri = None
+    interval = 5
+
+    try:
+        response = httpx.post(
+            device_auth_url,
+            data={
+                "client_id": cognito_client_id,
+                "scope": "openid profile",
+            },
+            timeout=30.0,
+        )
+        if response.status_code == 200:
+            data = response.json()
+            device_code = data.get("device_code")
+            user_code = data.get("user_code")
+            verification_uri = data.get("verification_uri")
+            interval = data.get("interval", 5)
+            step1.success = True
+            step1.details = "Device code obtained successfully"
+            step1.verbose_data.update({
+                "device_code": device_code[:8] + "..." if device_code else None,
+                "expires_in": data.get("expires_in"),
+                "interval": interval,
+            })
+        else:
+            step1.success = False
+            step1.error = f"Device authorization request failed (HTTP {response.status_code})"
+    except httpx.RequestError as e:
+        step1.success = False
+        step1.error = f"Connection error: {e}"
+
+    _display_step(step1, verbose)
+    steps.append(step1)
+
+    if not step1.success:
+        return steps
+
+    # Step 2: Display user code and verification URI
+    step2 = WorkflowStep(
+        step_number=2,
+        stage_name="Display Verification Instructions",
+        success=True,
+        details=f"Open {verification_uri} and enter code: {user_code}",
+        verbose_data={
+            "verification_uri": verification_uri,
+            "user_code": user_code,
+        },
+    )
+    _display_step(step2, verbose)
+    steps.append(step2)
+
+    click.echo(f"\n  → Open this URL in your browser: {verification_uri}")
+    click.echo(f"  → Enter this code: {user_code}")
+    click.echo("  → Waiting for authorization...\n")
+
+    # Step 3: Poll token endpoint
+    token_url = f"{cognito_endpoint}/oauth2/token"
+    step3 = WorkflowStep(step_number=3, stage_name="Poll for Authorization")
+
+    jwt_token = None
+    max_attempts = 60  # ~5 minutes with 5s interval
+
+    for attempt in range(max_attempts):
+        try:
+            token_response = httpx.post(
+                token_url,
+                data={
+                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                    "device_code": device_code,
+                    "client_id": cognito_client_id,
+                },
+                timeout=30.0,
+            )
+            if token_response.status_code == 200:
+                token_data = token_response.json()
+                jwt_token = token_data.get("id_token") or token_data.get("access_token", "")
+                step3.success = True
+                step3.details = f"Authorization granted (attempt {attempt + 1})"
+                step3.verbose_data = {
+                    "token_endpoint": token_url,
+                    "response_status": token_response.status_code,
+                    "token_type": token_data.get("token_type", "Bearer"),
+                    "expires_in": token_data.get("expires_in"),
+                    "attempts": attempt + 1,
+                }
+                break
+            else:
+                error_data = token_response.json() if token_response.content else {}
+                error = error_data.get("error", "")
+                if error == "authorization_pending":
+                    time.sleep(interval)
+                    continue
+                elif error == "slow_down":
+                    interval += 5
+                    time.sleep(interval)
+                    continue
+                elif error == "expired_token":
+                    step3.success = False
+                    step3.error = "Device code expired. Please try again."
+                    break
+                elif error == "access_denied":
+                    step3.success = False
+                    step3.error = "Authorization denied by user."
+                    break
+                else:
+                    step3.success = False
+                    step3.error = f"Token request failed: {error}"
+                    break
+        except httpx.RequestError as e:
+            step3.success = False
+            step3.error = f"Connection error during polling: {e}"
+            break
+    else:
+        step3.success = False
+        step3.error = "Polling timed out waiting for user authorization"
+
+    _display_step(step3, verbose)
+    steps.append(step3)
+
+    # Step 4: JWT acquisition confirmation
+    step4 = WorkflowStep(
+        step_number=4,
+        stage_name="JWT Acquired",
+    )
+
+    if jwt_token:
+        step4.success = True
+        step4.details = "JWT token acquired via Device Authorization Grant"
+        if verbose:
+            step4.verbose_data = _decode_jwt_for_display(jwt_token)
+    else:
+        step4.success = False
+        step4.error = "No JWT token received"
+
+    _display_step(step4, verbose)
+    steps.append(step4)
+
+    return steps
+
+
 def run_user_authentication_workflow(
     config: dict,
     username: str,

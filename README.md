@@ -34,7 +34,7 @@ Three agents deployed as separate AgentCore Runtime instances:
 | Agent | Role | Auth Method |
 |-------|------|-------------|
 | **Orchestrator** | Coordinates pipeline, validates JWTs, propagates identity | JWT Bearer + mTLS outbound |
-| **Scanner** | Fetches GitHub data (alerts, manifests, source) | User-delegated OAuth (AuthZ Code Grant) |
+| **Scanner** | Fetches GitHub data (alerts, manifests, source) | User-delegated OAuth with PKCE (AuthZ Code Grant) |
 | **Analysis** | Call graph analysis, scoring, recommendations | M2M (Client Credentials Grant) |
 
 All inter-agent communication is secured with **mutual TLS** and **HMAC-signed identity context** propagation.
@@ -72,8 +72,11 @@ pytest tests/smoke/ -m smoke
 ### CLI Usage
 
 ```bash
-# Authenticate against Cognito
-sca-demo authenticate --username <user> --password <pass>
+# Authenticate using Device Authorization Grant (OAuth 2.1 default)
+sca-demo authenticate
+
+# Legacy authentication (deprecated, shows warning)
+sca-demo authenticate --legacy --username <user> --password <pass>
 
 # Run full demo (all 5 workflows)
 sca-demo run-demo --username <user> --password <pass>
@@ -139,11 +142,22 @@ terraform destroy
 
 ### Authentication Layers
 
-1. **User → Platform**: Cognito OAuth 2.0 Authorization Code Grant → JWT
-2. **Agent → Agent**: Mutual TLS (X.509 client certificates from internal CA)
-3. **Agent → GitHub**: User-delegated OAuth (scopes: `security_events`, `repo`)
-4. **Agent → Vuln DBs**: M2M Client Credentials Grant
-5. **Identity Propagation**: HMAC-SHA256 signed context envelope across boundaries
+1. **User → Platform**: Cognito OAuth 2.1 Authorization Code Grant with PKCE → JWT
+2. **CLI → Platform**: Device Authorization Grant (RFC 8628) — no passwords transmitted
+3. **Agent → Agent**: Mutual TLS (X.509 client certificates from internal CA)
+4. **Agent → GitHub**: User-delegated OAuth with PKCE (scopes: `security_events`, `repo`)
+5. **Agent → Vuln DBs**: M2M Client Credentials Grant
+6. **Identity Propagation**: HMAC-SHA256 signed context envelope across boundaries
+
+### OAuth 2.1 Compliance
+
+This platform implements OAuth 2.1 (draft-ietf-oauth-v2-1) with the following changes from OAuth 2.0:
+
+- **PKCE mandatory** on all authorization code flows (S256 challenge method)
+- **Device Authorization Grant** (RFC 8628) for CLI authentication — no passwords
+- **Refresh token rotation** with replay detection (used tokens are rejected)
+- **Implicit grant formally unsupported** — removed per OAuth 2.1
+- **Resource Owner Password Credentials (ROPC) formally unsupported** — removed per OAuth 2.1
 
 ### Secrets Management
 

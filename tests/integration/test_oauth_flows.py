@@ -20,6 +20,7 @@ from src.agents.analysis import AnalysisAgent, AnalysisConfig, AnalysisRequest
 from src.agents.scanner import (
     AuthorizationError,
     ConsentDeniedError,
+    RefreshTokenReplayError,
     ScannerAgent,
     ScannerConfig,
     ScanRequest,
@@ -152,10 +153,14 @@ class TestGitHubOAuthAuthorizationCodeFlow:
 
             # Verify authorization code was requested
             mock_get_code.assert_called_once()
-            # Verify code exchange occurred
-            mock_exchange.assert_called_once_with(
-                "test_auth_code_789", ["security_events", "repo"]
-            )
+            # Verify code exchange occurred with PKCE code_verifier
+            mock_exchange.assert_called_once()
+            call_args = mock_exchange.call_args
+            assert call_args[0][0] == "test_auth_code_789"
+            assert call_args[0][1] == ["security_events", "repo"]
+            # OAuth 2.1: code_verifier must be included
+            assert "code_verifier" in call_args[1]
+            assert 43 <= len(call_args[1]["code_verifier"]) <= 128
             # Verify token returned correctly
             assert token.access_token == "gh_test_access_token_123"
             assert token.refresh_token == "gh_test_refresh_token_456"
@@ -743,3 +748,223 @@ class TestConsentDeniedErrorHandling:
 
             with pytest.raises(TokenExpiredError):
                 await agent._refresh_github_token("expired_refresh_token")
+
+
+
+# ---------------------------------------------------------------------------
+# Test PKCE in Authorization Code Flow (OAuth 2.1)
+# Validates: OAuth 2.1 §4.1 (PKCE mandatory)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestPKCEInAuthorizationCodeFlow:
+    """Tests that PKCE is included in all authorization code flows per OAuth 2.1."""
+
+    @pytest.mark.asyncio
+    async def test_oauth_flow_generates_pkce_parameters(self):
+        """Test that _initiate_oauth_flow generates code_verifier and code_challenge.
+
+        Verifies: The OAuth flow generates PKCE parameters and includes
+        code_challenge in the authorization URL and code_verifier in the
+        token exchange request.
+        """
+        from src.core.pkce import compute_code_challenge
+
+        config = _make_scanner_config()
+        agent = ScannerAgent(config)
+
+        now = datetime.now(timezone.utc)
+        expected_token = TokenInfo(
+            access_token="gh_pkce_test_token",
+            refresh_token="gh_pkce_refresh_token",
+            expires_at=now + timedelta(hours=1),
+            scopes=["security_events", "repo"],
+            agent_identity=SCANNER_ARN,
+        )
+
+        captured_auth_url = {}
+        captured_exchange_args = {}
+
+        original_get_code = agent._get_authorization_code
+        original_exchange = agent._exchange_code_for_tokens
+
+        async def mock_get_code(auth_url, user_subject):
+            captured_auth_url["url"] = auth_url
+            return "pkce_auth_code_123"
+
+        async def mock_exchange(auth_code, scopes, *, code_verifier=None):
+            captured_exchange_args["code_verifier"] = code_verifier
+            captured_exchange_args["auth_code"] = auth_code
+            return expected_token
+
+        with patch.object(agent, "_get_authorization_code", side_effect=mock_get_code), \
+             patch.object(agent, "_exchange_code_for_tokens", side_effect=mock_exchange):
+            token = await agent._initiate_oauth_flow("user-pkce", ["security_events", "repo"])
+
+        # Verify code_challenge is in the authorization URL
+        auth_url = captured_auth_url["url"]
+        assert "code_challenge=" in auth_url
+        assert "code_challenge_method=S256" in auth_url
+
+        # Verify code_verifier was passed to exchange
+        code_verifier = captured_exchange_args["code_verifier"]
+        assert code_verifier is not None
+        assert 43 <= len(code_verifier) <= 128
+
+        # Verify the code_challenge in URL matches SHA256 of code_verifier
+        expected_challenge = compute_code_challenge(code_verifier)
+        assert expected_challenge in auth_url
+
+        assert token.access_token == "gh_pkce_test_token"
+
+    @pytest.mark.asyncio
+    async def test_build_authorization_url_includes_pkce_challenge(self):
+        """Test that _build_authorization_url includes code_challenge and method."""
+        config = _make_scanner_config()
+        agent = ScannerAgent(config)
+
+        challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+        url = agent._build_authorization_url(
+            ["security_events", "repo"], code_challenge=challenge
+        )
+
+        assert "code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM" in url
+        assert "code_challenge_method=S256" in url
+
+    @pytest.mark.asyncio
+    async def test_build_authorization_url_without_challenge_omits_pkce(self):
+        """Test backward compat: no challenge param means no PKCE in URL."""
+        config = _make_scanner_config()
+        agent = ScannerAgent(config)
+
+        url = agent._build_authorization_url(["security_events", "repo"])
+
+        assert "code_challenge" not in url
+        assert "code_challenge_method" not in url
+
+
+# ---------------------------------------------------------------------------
+# Test Refresh Token Rotation (OAuth 2.1)
+# Validates: OAuth 2.1 refresh token rotation and replay detection
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestRefreshTokenRotation:
+    """Tests for OAuth 2.1 refresh token rotation and replay detection."""
+
+    def test_token_vault_marks_refresh_token_as_used(self):
+        """Test that used refresh tokens are tracked for replay detection."""
+        vault = TokenVault()
+
+        assert vault.is_refresh_token_replayed("token-1") is False
+        vault.mark_refresh_token_used("token-1")
+        assert vault.is_refresh_token_replayed("token-1") is True
+
+    def test_token_vault_replay_detection_isolated_per_token(self):
+        """Different tokens are tracked independently."""
+        vault = TokenVault()
+
+        vault.mark_refresh_token_used("token-a")
+        assert vault.is_refresh_token_replayed("token-a") is True
+        assert vault.is_refresh_token_replayed("token-b") is False
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_rotation_stores_new_token(self):
+        """Test that refresh returns a new refresh token (rotation)."""
+        config = _make_scanner_config()
+        agent = ScannerAgent(config)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "access_token": "new_access_token",
+            "refresh_token": "rotated_refresh_token",
+            "expires_in": 3600,
+            "scope": "security_events,repo",
+        }
+
+        mock_http = AsyncMock()
+        mock_http.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(agent, "_get_http_client", new_callable=AsyncMock) as mock_client:
+            mock_client.return_value = mock_http
+
+            token = await agent._refresh_github_token("old_refresh_token")
+
+        assert token.access_token == "new_access_token"
+        assert token.refresh_token == "rotated_refresh_token"
+        # Old token should be marked as used
+        assert agent._token_vault.is_refresh_token_replayed("old_refresh_token") is True
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_replay_rejected(self):
+        """Test that reusing a refresh token raises RefreshTokenReplayError."""
+        config = _make_scanner_config()
+        agent = ScannerAgent(config)
+
+        # Pre-mark a token as used
+        agent._token_vault.mark_refresh_token_used("replayed_token")
+
+        with pytest.raises(RefreshTokenReplayError):
+            await agent._refresh_github_token("replayed_token")
+
+    @pytest.mark.asyncio
+    async def test_refresh_rotation_full_flow(self):
+        """Test full flow: refresh → rotate → reject old token on reuse."""
+        config = _make_scanner_config()
+        agent = ScannerAgent(config)
+        identity_context = _make_valid_identity_context()
+        cert_info = _make_valid_cert_info()
+
+        now = datetime.now(timezone.utc)
+
+        # Store an expired access token with a valid refresh token
+        expired_token = TokenInfo(
+            access_token="expired_access",
+            refresh_token="first_refresh_token",
+            expires_at=now - timedelta(minutes=5),
+            scopes=["security_events", "repo"],
+            agent_identity=SCANNER_ARN,
+        )
+        agent._token_vault.store_token(agent._agent_arn, "user-123", expired_token)
+
+        # Mock the refresh endpoint to return a rotated token
+        rotated_token = TokenInfo(
+            access_token="fresh_access",
+            refresh_token="second_refresh_token",
+            expires_at=now + timedelta(hours=1),
+            scopes=["security_events", "repo"],
+            agent_identity=SCANNER_ARN,
+        )
+
+        with patch.object(
+            agent, "_refresh_github_token", new_callable=AsyncMock
+        ) as mock_refresh, patch.object(
+            agent, "_fetch_dependabot_alerts", new_callable=AsyncMock
+        ) as mock_alerts, patch.object(
+            agent, "_fetch_dependency_manifests", new_callable=AsyncMock
+        ) as mock_manifests, patch.object(
+            agent, "_fetch_source_code", new_callable=AsyncMock
+        ) as mock_source:
+            mock_refresh.return_value = rotated_token
+            mock_alerts.return_value = []
+            mock_manifests.return_value = []
+            mock_source.return_value = []
+
+            request = ScanRequest(
+                repository="owner/repo",
+                commit_sha="abc123",
+                identity_context=identity_context,
+                caller_cert_info=cert_info,
+            )
+
+            result = await agent.invoke(request)
+
+            assert result.success is True
+            mock_refresh.assert_called_once_with("first_refresh_token")
+
+            # Verify the stored token now has the rotated refresh token
+            stored = agent._token_vault.get_token(agent._agent_arn, "user-123")
+            assert stored.refresh_token == "second_refresh_token"

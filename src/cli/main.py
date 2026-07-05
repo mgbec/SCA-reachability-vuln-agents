@@ -119,17 +119,27 @@ def cli(
 
 
 @cli.command()
-@click.option("--username", prompt="Username", help="Cognito username for authentication.")
+@click.option("--legacy", is_flag=True, default=False,
+              help="[DEPRECATED] Use legacy username/password authentication (ROPC).")
+@click.option("--username", default=None, help="[DEPRECATED] Cognito username (legacy mode only).")
 @click.option(
     "--password",
-    prompt="Password",
+    default=None,
     hide_input=True,
-    help="Cognito password for authentication.",
+    help="[DEPRECATED] Cognito password (legacy mode only).",
 )
 @click.pass_context
-def authenticate(ctx: click.Context, username: str, password: str) -> None:
-    """Authenticate a user against Cognito and obtain a JWT token."""
-    from src.cli.workflows import run_user_authentication_workflow
+def authenticate(ctx: click.Context, legacy: bool, username: str | None, password: str | None) -> None:
+    """Authenticate using Device Authorization Grant (OAuth 2.1).
+
+    By default, uses the Device Authorization Grant (RFC 8628): requests a
+    device code, displays a verification URI and user code, and polls
+    until the user authorizes in their browser. No passwords are transmitted.
+
+    The --legacy flag preserves backward-compatible username/password auth
+    with a deprecation warning (ROPC removed in OAuth 2.1).
+    """
+    from src.cli.workflows import run_device_authorization_workflow, run_user_authentication_workflow
 
     verbose = ctx.obj["verbose"]
     config = ctx.obj["config"]
@@ -149,11 +159,24 @@ def authenticate(ctx: click.Context, username: str, password: str) -> None:
         ctx.exit(1)
         return
 
-    # Store credentials in context for downstream workflow commands
-    ctx.obj["username"] = username
-    ctx.obj["password"] = password
-
-    run_user_authentication_workflow(config, username, password, verbose)
+    if legacy or (username and password):
+        # Legacy ROPC mode with deprecation warning
+        click.echo(
+            "WARNING: --username/--password authentication is deprecated. "
+            "OAuth 2.1 removes the Resource Owner Password Credentials grant. "
+            "Use the default Device Authorization Grant instead.",
+            err=True,
+        )
+        if not username:
+            username = click.prompt("Username")
+        if not password:
+            password = click.prompt("Password", hide_input=True)
+        ctx.obj["username"] = username
+        ctx.obj["password"] = password
+        run_user_authentication_workflow(config, username, password, verbose)
+    else:
+        # OAuth 2.1 Device Authorization Grant (default)
+        run_device_authorization_workflow(config, verbose)
 
 
 @cli.command()

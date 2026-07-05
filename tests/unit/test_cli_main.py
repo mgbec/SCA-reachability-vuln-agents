@@ -139,9 +139,10 @@ class TestGatherEnvVars:
 
 
 class TestAuthenticateCommand:
-    """Tests for Requirement 8.5: Accept username/password for Cognito authentication."""
+    """Tests for OAuth 2.1 Device Authorization Grant and legacy mode."""
 
-    def test_authenticate_prompts_for_credentials(self, runner):
+    def test_authenticate_uses_device_flow_by_default(self, runner):
+        """Default authenticate uses Device Authorization Grant (no password prompts)."""
         env = {
             "AGENTCORE_COGNITO_ENDPOINT": "http://cognito.example.com",
             "AGENTCORE_COGNITO_CLIENT_ID": "test-client-id",
@@ -149,13 +150,43 @@ class TestAuthenticateCommand:
         result = runner.invoke(
             cli,
             ["authenticate"],
-            input="testuser\ntestpass\n",
             env=env,
         )
         assert result.exit_code == 0
-        assert "testuser" in result.output
+        assert "Device Authorization Grant" in result.output
 
-    def test_authenticate_accepts_cli_credentials(self, runner):
+    def test_authenticate_device_flow_displays_verification_steps(self, runner):
+        """Device flow displays verification URI instructions."""
+        env = {
+            "AGENTCORE_COGNITO_ENDPOINT": "http://cognito.example.com",
+            "AGENTCORE_COGNITO_CLIENT_ID": "test-client-id",
+        }
+        result = runner.invoke(
+            cli,
+            ["authenticate"],
+            env=env,
+        )
+        assert result.exit_code == 0
+        # Should show workflow step numbering
+        assert "[1]" in result.output
+        assert "Device Code" in result.output or "device" in result.output.lower()
+
+    def test_authenticate_legacy_flag_shows_deprecation_warning(self, runner):
+        """--legacy flag triggers deprecation warning about ROPC removal."""
+        env = {
+            "AGENTCORE_COGNITO_ENDPOINT": "http://cognito.example.com",
+            "AGENTCORE_COGNITO_CLIENT_ID": "test-client-id",
+        }
+        result = runner.invoke(
+            cli,
+            ["authenticate", "--legacy", "--username", "myuser", "--password", "mypass"],
+            env=env,
+        )
+        assert result.exit_code == 0
+        assert "deprecated" in result.output.lower() or "DEPRECATED" in result.output
+
+    def test_authenticate_username_password_triggers_legacy_with_warning(self, runner):
+        """Providing --username/--password uses legacy mode with warning."""
         env = {
             "AGENTCORE_COGNITO_ENDPOINT": "http://cognito.example.com",
             "AGENTCORE_COGNITO_CLIENT_ID": "test-client-id",
@@ -166,41 +197,27 @@ class TestAuthenticateCommand:
             env=env,
         )
         assert result.exit_code == 0
-        assert "myuser" in result.output
+        assert "deprecated" in result.output.lower() or "DEPRECATED" in result.output
 
-    def test_authenticate_verbose_shows_endpoint_details(self, runner):
+    def test_authenticate_legacy_verbose_shows_endpoint_details(self, runner):
+        """Legacy mode in verbose still shows Cognito endpoint details."""
         env = {
             "AGENTCORE_COGNITO_ENDPOINT": "http://cognito.example.com",
             "AGENTCORE_COGNITO_CLIENT_ID": "test-client-id",
         }
         result = runner.invoke(
             cli,
-            ["-v", "authenticate", "--username", "myuser", "--password", "mypass"],
+            ["-v", "authenticate", "--legacy", "--username", "myuser", "--password", "mypass"],
             env=env,
         )
         assert result.exit_code == 0
         assert "http://cognito.example.com" in result.output
         assert "test-client-id" in result.output
-        assert "myuser" in result.output
-
-    def test_authenticate_summary_shows_step_info(self, runner):
-        env = {
-            "AGENTCORE_COGNITO_ENDPOINT": "http://cognito.example.com",
-            "AGENTCORE_COGNITO_CLIENT_ID": "test-client-id",
-        }
-        result = runner.invoke(
-            cli,
-            ["authenticate", "--username", "myuser", "--password", "mypass"],
-            env=env,
-        )
-        assert result.exit_code == 0
-        assert "[1]" in result.output
-        assert "Authentication" in result.output
 
     def test_authenticate_errors_without_cognito_endpoint(self, runner):
         result = runner.invoke(
             cli,
-            ["authenticate", "--username", "myuser", "--password", "mypass"],
+            ["authenticate"],
             env={},
         )
         # Should report an error about missing cognito endpoint
@@ -210,7 +227,7 @@ class TestAuthenticateCommand:
         env = {"AGENTCORE_COGNITO_ENDPOINT": "http://cognito.example.com"}
         result = runner.invoke(
             cli,
-            ["authenticate", "--username", "myuser", "--password", "mypass"],
+            ["authenticate"],
             env=env,
         )
         assert "Cognito client ID not configured" in result.output
@@ -227,6 +244,7 @@ class TestCliEntryPoint:
     def test_authenticate_help_displays(self, runner):
         result = runner.invoke(cli, ["authenticate", "--help"])
         assert result.exit_code == 0
+        assert "--legacy" in result.output
         assert "--username" in result.output
         assert "--password" in result.output
 
