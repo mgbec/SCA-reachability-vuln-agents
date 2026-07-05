@@ -23,6 +23,10 @@ User → Demo CLI → Cognito (JWT)
                     → Analysis Agent (M2M client credentials)
                         → Vulnerability DBs (NVD, OSV, GHSA)
                         → tree-sitter (call graph analysis)
+
+Observability (direct export, no Collector sidecar):
+  Each Agent → AWS X-Ray (traces via ADOT layer)
+            → CloudWatch (metrics via EMF, logs via structured logging)
 ```
 
 Three agents deployed as separate AgentCore Runtime instances:
@@ -150,11 +154,12 @@ terraform destroy
 
 ### Observability
 
-- OpenTelemetry SDK instrumentation → Collector sidecars
-- Traces → AWS X-Ray
-- Metrics → CloudWatch (auth success/failure counts, latency histograms)
+- OpenTelemetry SDK instrumentation → direct AWS export (no Collector sidecar required)
+- Traces → AWS X-Ray (via ADOT layer with X-Ray ID generator + propagator)
+- Metrics → CloudWatch EMF (via ADOT layer OTLP endpoint)
 - Logs → CloudWatch Logs (structured JSON, 90-day retention)
 - Auth failure rate alarm (configurable threshold, default 10%)
+- Graceful degradation: works without AWS backends locally (in-memory/console fallback)
 
 ## Scoring Algorithm
 
