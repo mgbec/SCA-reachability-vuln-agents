@@ -113,6 +113,8 @@ terraform/
 ├── variables.tf         # Input variables
 ├── outputs.tf           # Endpoints for CLI
 ├── backend.tf           # S3 + KMS state encryption
+├── bootstrap/           # One-time state backend setup
+│   └── main.tf          # Creates S3 bucket, KMS key, DynamoDB lock table
 └── modules/
     ├── cognito/         # User pool, client, test user
     ├── agentcore/       # Runtime instances, identity directory
@@ -121,6 +123,25 @@ terraform/
     ├── secrets/         # Secrets Manager + rotation
     ├── observability/   # CloudWatch dashboard, alarms, log groups
     └── networking/      # VPC, security groups
+```
+
+### Bootstrap (one-time)
+
+Before deploying infrastructure, you need to create the Terraform state backend resources (S3 bucket with KMS encryption + DynamoDB lock table):
+
+```bash
+cd terraform/bootstrap
+terraform init
+terraform apply
+```
+
+Then switch to the remote backend:
+
+1. Edit `terraform/backend.tf` — uncomment the S3 backend block, remove the local backend block
+2. Run:
+```bash
+cd terraform
+terraform init -migrate-state
 ```
 
 ### Deploy
