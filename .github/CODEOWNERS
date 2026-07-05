@@ -1,0 +1,9 @@
+# Default owners for the entire repository
+* @mgbec
+
+# Security-sensitive files require explicit review
+SECURITY.md @mgbec
+src/core/identity_context.py @mgbec
+src/core/jwt_validation.py @mgbec
+src/agents/startup.py @mgbec
+terraform/ @mgbec

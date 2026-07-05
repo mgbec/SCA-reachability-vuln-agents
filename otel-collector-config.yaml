@@ -1,0 +1,52 @@
+# OpenTelemetry Collector Sidecar Configuration
+# Deployed as one collector instance per agent runtime (sidecar pattern).
+# Receives telemetry from agent runtimes via OTLP and exports to AWS backends.
+#
+# Validates: Requirements 11.4, 11.8, 12.7
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
+      http:
+        endpoint: "0.0.0.0:4318"
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 256
+  resource:
+    attributes:
+      - key: service.name
+        action: upsert
+        value: "${AGENT_NAME}"
+
+exporters:
+  awsxray:
+    region: ${AWS_REGION}
+    indexed_attributes: ["auth.step_type", "auth.outcome"]
+  awsemf:
+    region: ${AWS_REGION}
+    namespace: "AgentCoreReachabilitySCA"
+    log_group_name: "/agentcore/reachability-sca/metrics"
+    dimension_rollup_option: "NoDimensionRollup"
+  awscloudwatchlogs:
+    region: ${AWS_REGION}
+    log_group_name: "/agentcore/reachability-sca/logs"
+    log_retention: 90
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch, resource]
+      exporters: [awsxray]
+    metrics:
+      receivers: [otlp]
+      processors: [batch, resource]
+      exporters: [awsemf]
+    logs:
+      receivers: [otlp]
+      processors: [batch, resource]
+      exporters: [awscloudwatchlogs]
