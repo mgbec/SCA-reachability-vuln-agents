@@ -36,9 +36,9 @@ variable "region" {
 }
 
 variable "bucket_name" {
-  description = "S3 bucket name for Terraform state"
+  description = "S3 bucket name for Terraform state. Defaults to agentcore-sca-tfstate-{account_id}-{region}."
   type        = string
-  default     = "agentcore-sca-tfstate"
+  default     = ""  # Will be computed from account ID + region if empty
 }
 
 variable "dynamodb_table_name" {
@@ -73,8 +73,15 @@ resource "aws_kms_alias" "terraform_state" {
 
 # --- S3 Bucket for state ---
 
+locals {
+  account_id  = data.aws_caller_identity.current.account_id
+  bucket_name = var.bucket_name != "" ? var.bucket_name : "agentcore-sca-tfstate-${local.account_id}-${var.region}"
+}
+
+data "aws_caller_identity" "current" {}
+
 resource "aws_s3_bucket" "terraform_state" {
-  bucket = var.bucket_name
+  bucket = local.bucket_name
 
   tags = {
     Purpose = "terraform-state"

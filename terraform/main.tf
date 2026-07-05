@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = ">= 6.53.0"
     }
     tls = {
       source  = "hashicorp/tls"
@@ -59,11 +59,19 @@ module "agentcore" {
   cognito_user_pool_endpoint = module.cognito.user_pool_endpoint
   cognito_client_id          = module.cognito.client_id
 
-  # Secret ARNs from the secrets module (referenced by ARN, never plaintext)
-  github_oauth_client_id_secret_arn = module.secrets.github_oauth_client_id_arn
-  github_oauth_client_secret_arn    = module.secrets.github_oauth_client_secret_arn
-  m2m_client_id_secret_arn          = module.secrets.m2m_client_id_arn
-  m2m_client_secret_arn             = module.secrets.m2m_client_secret_arn
+  # GitHub OAuth credentials (Scanner Agent)
+  github_oauth_client_id     = var.github_oauth_client_id
+  github_oauth_client_secret = var.github_oauth_client_secret
+
+  # M2M credentials (Analysis Agent)
+  m2m_client_id             = var.m2m_client_id
+  m2m_client_secret         = var.m2m_client_secret
+  m2m_token_endpoint_issuer = var.m2m_token_endpoint_issuer
+
+  # Container URIs (ECR)
+  orchestrator_container_uri = var.orchestrator_container_uri
+  scanner_container_uri      = var.scanner_container_uri
+  analysis_container_uri     = var.analysis_container_uri
 }
 
 module "observability" {

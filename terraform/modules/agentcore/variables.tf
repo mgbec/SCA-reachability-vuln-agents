@@ -26,25 +26,61 @@ variable "cognito_client_id" {
   sensitive   = true
 }
 
-variable "github_oauth_client_id_secret_arn" {
-  description = "ARN of the Secrets Manager secret containing the GitHub OAuth client ID"
+# --- GitHub OAuth credentials (Scanner Agent) ---
+
+variable "github_oauth_client_id" {
+  description = "GitHub OAuth client ID for Scanner Agent"
   type        = string
+  sensitive   = true
 }
 
-variable "github_oauth_client_secret_arn" {
-  description = "ARN of the Secrets Manager secret containing the GitHub OAuth client secret"
+variable "github_oauth_client_secret" {
+  description = "GitHub OAuth client secret for Scanner Agent"
   type        = string
+  sensitive   = true
 }
 
-variable "m2m_client_id_secret_arn" {
-  description = "ARN of the Secrets Manager secret containing the M2M client ID"
+# --- M2M credentials (Analysis Agent) ---
+
+variable "m2m_client_id" {
+  description = "M2M OAuth client ID for Analysis Agent"
   type        = string
+  sensitive   = true
 }
 
-variable "m2m_client_secret_arn" {
-  description = "ARN of the Secrets Manager secret containing the M2M client secret"
+variable "m2m_client_secret" {
+  description = "M2M OAuth client secret for Analysis Agent"
   type        = string
+  sensitive   = true
 }
+
+variable "m2m_token_endpoint_issuer" {
+  description = "Issuer URL for the M2M token endpoint (e.g., https://auth.vulnerability-db.example.com)"
+  type        = string
+  default     = "https://auth.vulnerability-db.example.com"
+}
+
+# --- Container URIs ---
+
+variable "orchestrator_container_uri" {
+  description = "ECR container URI for the Orchestrator Agent"
+  type        = string
+  default     = ""
+}
+
+variable "scanner_container_uri" {
+  description = "ECR container URI for the Scanner Agent"
+  type        = string
+  default     = ""
+}
+
+variable "analysis_container_uri" {
+  description = "ECR container URI for the Analysis Agent"
+  type        = string
+  default     = ""
+}
+
+# --- Tags ---
 
 variable "tags" {
   description = "Additional tags to apply to all AgentCore resources"

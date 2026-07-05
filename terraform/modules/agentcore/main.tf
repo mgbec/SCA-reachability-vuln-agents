@@ -1,15 +1,9 @@
-# AgentCore module — Runtime instances, Identity Directory, Credential Providers, JWT Authorizers
+# AgentCore module — Runtime instances, Workload Identities, Credential Providers
 #
-# This module provisions:
-# - Three AgentCore Runtime instances (Orchestrator, Scanner, Analysis)
-# - Workload identity registrations in the Identity Directory for each agent
-# - Credential Providers: USER_FEDERATION for Scanner (GitHub OAuth), M2M for Analysis
-# - JWT Authorizer configuration on each runtime with Cognito discovery URL
-#
-# Note: AWS Bedrock AgentCore is a newer service. Resource type names
-# (aws_bedrock_agentcore_*) are used to model the correct configuration intent.
-# If no native Terraform provider resource exists yet, these serve as
-# infrastructure-as-code documentation of the intended provisioning.
+# Uses the official Terraform AWS provider (>= 6.53.0) resource types:
+#   - aws_bedrockagentcore_agent_runtime
+#   - aws_bedrockagentcore_workload_identity
+#   - aws_bedrockagentcore_oauth2_credential_provider
 
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
@@ -18,108 +12,77 @@ locals {
   account_id = data.aws_caller_identity.current.account_id
   region     = data.aws_region.current.name
 
-  agent_names = ["orchestrator-agent", "scanner-agent", "analysis-agent"]
-
-  # ARN pattern for workload identities
-  workload_identity_arn_prefix = "arn:aws:bedrock-agentcore:${local.region}:${local.account_id}:workload-identity/directory/default/workload-identity"
-
   # OIDC discovery URL derived from the Cognito User Pool endpoint
   oidc_discovery_url = "${var.cognito_user_pool_endpoint}/.well-known/openid-configuration"
 }
 
 # =============================================================================
-# Identity Directory — Workload Identity Registrations
+# IAM Role for AgentCore Runtime
 # =============================================================================
-# Each agent is registered as a distinct workload identity with a unique ARN
-# following: arn:aws:bedrock-agentcore:{region}:{account}:workload-identity/directory/default/workload-identity/{agent-name}
 
-resource "aws_bedrock_agentcore_workload_identity" "orchestrator" {
-  name         = "orchestrator-agent"
-  directory_id = "default"
-
-  allowed_oauth_return_urls = [
-    "https://${var.project_name}-${var.environment}-orchestrator.agentcore.${var.region}.amazonaws.com/oauth/callback"
-  ]
-
-  metadata = {
-    project     = var.project_name
-    environment = var.environment
-    role        = "orchestrator"
+data "aws_iam_policy_document" "agentcore_assume_role" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["bedrock-agentcore.amazonaws.com"]
+    }
   }
-
-  tags = merge(var.tags, {
-    Component = "agentcore-identity"
-    Agent     = "orchestrator-agent"
-  })
 }
 
-resource "aws_bedrock_agentcore_workload_identity" "scanner" {
-  name         = "scanner-agent"
-  directory_id = "default"
-
-  allowed_oauth_return_urls = [
-    "https://${var.project_name}-${var.environment}-scanner.agentcore.${var.region}.amazonaws.com/oauth/callback"
-  ]
-
-  metadata = {
-    project     = var.project_name
-    environment = var.environment
-    role        = "scanner"
-  }
+resource "aws_iam_role" "agentcore_runtime" {
+  name               = "${var.project_name}-${var.environment}-agentcore-runtime-role"
+  assume_role_policy = data.aws_iam_policy_document.agentcore_assume_role.json
 
   tags = merge(var.tags, {
-    Component = "agentcore-identity"
-    Agent     = "scanner-agent"
-  })
-}
-
-resource "aws_bedrock_agentcore_workload_identity" "analysis" {
-  name         = "analysis-agent"
-  directory_id = "default"
-
-  allowed_oauth_return_urls = [
-    "https://${var.project_name}-${var.environment}-analysis.agentcore.${var.region}.amazonaws.com/oauth/callback"
-  ]
-
-  metadata = {
-    project     = var.project_name
-    environment = var.environment
-    role        = "analysis"
-  }
-
-  tags = merge(var.tags, {
-    Component = "agentcore-identity"
-    Agent     = "analysis-agent"
+    Component = "agentcore-iam"
   })
 }
 
 # =============================================================================
-# Credential Providers
+# Workload Identities
 # =============================================================================
-# Scanner Agent: USER_FEDERATION (GitHub OAuth — Authorization Code Grant)
-# Analysis Agent: M2M (Client Credentials Grant)
 
-resource "aws_bedrock_agentcore_credential_provider" "scanner_github_oauth" {
-  name                 = "${var.project_name}-${var.environment}-scanner-github-oauth"
-  workload_identity_id = aws_bedrock_agentcore_workload_identity.scanner.id
-  type                 = "USER_FEDERATION"
+resource "aws_bedrockagentcore_workload_identity" "orchestrator" {
+  name = "${var.project_name}-${var.environment}-orchestrator-agent"
 
-  oauth_config {
-    authorization_endpoint = "https://github.com/login/oauth/authorize"
-    token_endpoint         = "https://github.com/login/oauth/access_token"
+  allowed_resource_oauth2_return_urls = [
+    "https://${var.project_name}-${var.environment}-orchestrator.agentcore.${local.region}.amazonaws.com/oauth/callback"
+  ]
+}
 
-    # Client credentials retrieved from Secrets Manager (never plaintext in state)
-    client_id_secret_arn     = var.github_oauth_client_id_secret_arn
-    client_secret_secret_arn = var.github_oauth_client_secret_arn
+resource "aws_bedrockagentcore_workload_identity" "scanner" {
+  name = "${var.project_name}-${var.environment}-scanner-agent"
 
-    # Allowed scopes for user-delegated GitHub access
-    allowed_scopes = ["security_events", "repo"]
+  allowed_resource_oauth2_return_urls = [
+    "https://${var.project_name}-${var.environment}-scanner.agentcore.${local.region}.amazonaws.com/oauth/callback"
+  ]
+}
 
-    # CSRF protection via state parameter is handled automatically by AgentCore Identity
-    enable_state_parameter = true
+resource "aws_bedrockagentcore_workload_identity" "analysis" {
+  name = "${var.project_name}-${var.environment}-analysis-agent"
 
-    # Callback URL registered in Identity Directory
-    redirect_uri = aws_bedrock_agentcore_workload_identity.scanner.allowed_oauth_return_urls[0]
+  allowed_resource_oauth2_return_urls = [
+    "https://${var.project_name}-${var.environment}-analysis.agentcore.${local.region}.amazonaws.com/oauth/callback"
+  ]
+}
+
+# =============================================================================
+# OAuth2 Credential Providers
+# =============================================================================
+
+# Scanner Agent: GitHub OAuth (User-delegated access)
+resource "aws_bedrockagentcore_oauth2_credential_provider" "scanner_github" {
+  name = "${var.project_name}-${var.environment}-scanner-github-oauth"
+
+  credential_provider_vendor = "GithubOauth2"
+
+  oauth2_provider_config {
+    github_oauth2_provider_config {
+      client_id     = var.github_oauth_client_id
+      client_secret = var.github_oauth_client_secret
+    }
   }
 
   tags = merge(var.tags, {
@@ -129,23 +92,26 @@ resource "aws_bedrock_agentcore_credential_provider" "scanner_github_oauth" {
   })
 }
 
-resource "aws_bedrock_agentcore_credential_provider" "analysis_m2m" {
-  name                 = "${var.project_name}-${var.environment}-analysis-m2m"
-  workload_identity_id = aws_bedrock_agentcore_workload_identity.analysis.id
-  type                 = "M2M"
+# Analysis Agent: Custom OAuth2 (M2M client credentials for vuln DBs)
+resource "aws_bedrockagentcore_oauth2_credential_provider" "analysis_m2m" {
+  name = "${var.project_name}-${var.environment}-analysis-m2m"
 
-  client_credentials_config {
-    token_endpoint = "https://auth.vulnerability-db.example.com/oauth2/token"
+  credential_provider_vendor = "CustomOauth2"
 
-    # Client credentials retrieved from Secrets Manager (never plaintext in state)
-    client_id_secret_arn     = var.m2m_client_id_secret_arn
-    client_secret_secret_arn = var.m2m_client_secret_arn
+  oauth2_provider_config {
+    custom_oauth2_provider_config {
+      client_id     = var.m2m_client_id
+      client_secret = var.m2m_client_secret
 
-    # Scopes for vulnerability database access
-    allowed_scopes = ["read:vulnerabilities", "read:advisories"]
-
-    # Proactive refresh: obtain new token when within 60 seconds of expiration
-    proactive_refresh_buffer_seconds = 60
+      oauth_discovery {
+        authorization_server_metadata {
+          issuer                 = var.m2m_token_endpoint_issuer
+          authorization_endpoint = "${var.m2m_token_endpoint_issuer}/authorize"
+          token_endpoint         = "${var.m2m_token_endpoint_issuer}/oauth2/token"
+          response_types         = ["code"]
+        }
+      }
+    }
   }
 
   tags = merge(var.tags, {
@@ -156,27 +122,38 @@ resource "aws_bedrock_agentcore_credential_provider" "analysis_m2m" {
 }
 
 # =============================================================================
-# AgentCore Runtime Instances
+# AgentCore Agent Runtime Instances
 # =============================================================================
-# Each agent runs as a separate AgentCore Runtime instance with JWT Authorizer.
 
-resource "aws_bedrock_agentcore_runtime" "orchestrator" {
-  name = "${var.project_name}-${var.environment}-orchestrator-agent"
+resource "aws_bedrockagentcore_agent_runtime" "orchestrator" {
+  agent_runtime_name = "${var.project_name}-${var.environment}-orchestrator-agent"
+  description        = "Orchestrator Agent — coordinates vulnerability analysis pipeline"
+  role_arn           = aws_iam_role.agentcore_runtime.arn
 
-  workload_identity_id = aws_bedrock_agentcore_workload_identity.orchestrator.id
-
-  # JWT Authorizer — validates inbound JWT bearer tokens from the Demo CLI / callers
-  jwt_authorizer {
-    issuer_url         = var.cognito_user_pool_endpoint
-    discovery_url      = local.oidc_discovery_url
-    allowed_audiences  = [var.cognito_client_id]
-    allowed_client_ids = [var.cognito_client_id]
+  agent_runtime_artifact {
+    container_configuration {
+      container_uri = var.orchestrator_container_uri
+    }
   }
 
-  # Runtime configuration
-  runtime_config {
-    memory_size_mb  = 512
-    timeout_seconds = 300
+  authorizer_configuration {
+    custom_jwt_authorizer {
+      discovery_url    = local.oidc_discovery_url
+      allowed_audience = [var.cognito_client_id]
+      allowed_clients  = [var.cognito_client_id]
+    }
+  }
+
+  network_configuration {
+    network_mode = "PUBLIC"
+  }
+
+  environment_variables = {
+    AGENT_NAME         = "orchestrator-agent"
+    SCANNER_ENDPOINT   = "https://${var.project_name}-${var.environment}-scanner.agentcore.${local.region}.amazonaws.com"
+    ANALYSIS_ENDPOINT  = "https://${var.project_name}-${var.environment}-analysis.agentcore.${local.region}.amazonaws.com"
+    COGNITO_ISSUER     = var.cognito_user_pool_endpoint
+    COGNITO_AUDIENCE   = var.cognito_client_id
   }
 
   tags = merge(var.tags, {
@@ -185,28 +162,31 @@ resource "aws_bedrock_agentcore_runtime" "orchestrator" {
   })
 }
 
-resource "aws_bedrock_agentcore_runtime" "scanner" {
-  name = "${var.project_name}-${var.environment}-scanner-agent"
+resource "aws_bedrockagentcore_agent_runtime" "scanner" {
+  agent_runtime_name = "${var.project_name}-${var.environment}-scanner-agent"
+  description        = "Scanner Agent — GitHub OAuth access for Dependabot alerts and source code"
+  role_arn           = aws_iam_role.agentcore_runtime.arn
 
-  workload_identity_id = aws_bedrock_agentcore_workload_identity.scanner.id
-
-  # JWT Authorizer — validates inbound tokens (from Orchestrator delegation)
-  jwt_authorizer {
-    issuer_url         = var.cognito_user_pool_endpoint
-    discovery_url      = local.oidc_discovery_url
-    allowed_audiences  = [var.cognito_client_id]
-    allowed_client_ids = [var.cognito_client_id]
+  agent_runtime_artifact {
+    container_configuration {
+      container_uri = var.scanner_container_uri
+    }
   }
 
-  # Associate credential providers for outbound OAuth
-  credential_provider_ids = [
-    aws_bedrock_agentcore_credential_provider.scanner_github_oauth.id
-  ]
+  authorizer_configuration {
+    custom_jwt_authorizer {
+      discovery_url    = local.oidc_discovery_url
+      allowed_audience = [var.cognito_client_id]
+      allowed_clients  = [var.cognito_client_id]
+    }
+  }
 
-  # Runtime configuration
-  runtime_config {
-    memory_size_mb  = 1024
-    timeout_seconds = 600
+  network_configuration {
+    network_mode = "PUBLIC"
+  }
+
+  environment_variables = {
+    AGENT_NAME = "scanner-agent"
   }
 
   tags = merge(var.tags, {
@@ -215,28 +195,31 @@ resource "aws_bedrock_agentcore_runtime" "scanner" {
   })
 }
 
-resource "aws_bedrock_agentcore_runtime" "analysis" {
-  name = "${var.project_name}-${var.environment}-analysis-agent"
+resource "aws_bedrockagentcore_agent_runtime" "analysis" {
+  agent_runtime_name = "${var.project_name}-${var.environment}-analysis-agent"
+  description        = "Analysis Agent — tree-sitter call graph, exploitability scoring, fix recommendations"
+  role_arn           = aws_iam_role.agentcore_runtime.arn
 
-  workload_identity_id = aws_bedrock_agentcore_workload_identity.analysis.id
-
-  # JWT Authorizer — validates inbound tokens (from Orchestrator delegation)
-  jwt_authorizer {
-    issuer_url         = var.cognito_user_pool_endpoint
-    discovery_url      = local.oidc_discovery_url
-    allowed_audiences  = [var.cognito_client_id]
-    allowed_client_ids = [var.cognito_client_id]
+  agent_runtime_artifact {
+    container_configuration {
+      container_uri = var.analysis_container_uri
+    }
   }
 
-  # Associate credential providers for outbound M2M auth
-  credential_provider_ids = [
-    aws_bedrock_agentcore_credential_provider.analysis_m2m.id
-  ]
+  authorizer_configuration {
+    custom_jwt_authorizer {
+      discovery_url    = local.oidc_discovery_url
+      allowed_audience = [var.cognito_client_id]
+      allowed_clients  = [var.cognito_client_id]
+    }
+  }
 
-  # Runtime configuration — larger memory for tree-sitter call graph analysis
-  runtime_config {
-    memory_size_mb  = 2048
-    timeout_seconds = 900
+  network_configuration {
+    network_mode = "PUBLIC"
+  }
+
+  environment_variables = {
+    AGENT_NAME = "analysis-agent"
   }
 
   tags = merge(var.tags, {
