@@ -31,5 +31,5 @@ output "client_secret" {
 
 output "oidc_discovery_url" {
   description = "The OpenID Connect discovery endpoint URL"
-  value       = "https://cognito-idp.${data.aws_region.current.name}.amazonaws.com/${aws_cognito_user_pool.main.id}/.well-known/openid-configuration"
+  value       = "https://cognito-idp.${data.aws_region.current.region}.amazonaws.com/${aws_cognito_user_pool.main.id}/.well-known/openid-configuration"
 }

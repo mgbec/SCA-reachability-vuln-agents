@@ -10,7 +10,7 @@ data "aws_region" "current" {}
 
 locals {
   account_id = data.aws_caller_identity.current.account_id
-  region     = data.aws_region.current.name
+  region     = data.aws_region.current.region
 
   # OIDC discovery URL derived from the Cognito User Pool endpoint
   oidc_discovery_url = "${var.cognito_user_pool_endpoint}/.well-known/openid-configuration"

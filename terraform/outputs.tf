@@ -9,17 +9,22 @@ output "cognito_client_id" {
   sensitive   = true
 }
 
-output "orchestrator_agent_endpoint" {
-  description = "Orchestrator Agent invocation endpoint URL"
-  value       = module.agentcore.orchestrator_agent_endpoint
+output "orchestrator_agent_runtime_arn" {
+  description = "Orchestrator Agent Runtime ARN"
+  value       = module.agentcore.orchestrator_agent_runtime_arn
 }
 
-output "scanner_agent_endpoint" {
-  description = "Scanner Agent invocation endpoint URL"
-  value       = module.agentcore.scanner_agent_endpoint
+output "scanner_agent_runtime_arn" {
+  description = "Scanner Agent Runtime ARN"
+  value       = module.agentcore.scanner_agent_runtime_arn
 }
 
-output "analysis_agent_endpoint" {
-  description = "Analysis Agent invocation endpoint URL"
-  value       = module.agentcore.analysis_agent_endpoint
+output "analysis_agent_runtime_arn" {
+  description = "Analysis Agent Runtime ARN"
+  value       = module.agentcore.analysis_agent_runtime_arn
+}
+
+output "workload_identity_arns" {
+  description = "Map of agent names to their workload identity ARNs"
+  value       = module.agentcore.workload_identity_arns
 }
