@@ -77,8 +77,8 @@ resource "aws_cognito_user_pool_client" "main" {
     refresh_token = "days"
   }
 
-  # Generate client secret for confidential client flow
-  generate_secret = true
+  # Public client — no secret needed (PKCE provides security for native/CLI apps per OAuth 2.1)
+  generate_secret = false
 
   # Explicit auth flows for password-based authentication (demo purposes)
   explicit_auth_flows = [
