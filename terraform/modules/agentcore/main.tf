@@ -126,7 +126,7 @@ resource "aws_bedrockagentcore_oauth2_credential_provider" "analysis_m2m" {
 # =============================================================================
 
 resource "aws_bedrockagentcore_agent_runtime" "orchestrator" {
-  agent_runtime_name = "${var.project_name}-${var.environment}-orchestrator-agent"
+  agent_runtime_name = "sca_orchestrator_agent"
   description        = "Orchestrator Agent — coordinates vulnerability analysis pipeline"
   role_arn           = aws_iam_role.agentcore_runtime.arn
 
@@ -163,7 +163,7 @@ resource "aws_bedrockagentcore_agent_runtime" "orchestrator" {
 }
 
 resource "aws_bedrockagentcore_agent_runtime" "scanner" {
-  agent_runtime_name = "${var.project_name}-${var.environment}-scanner-agent"
+  agent_runtime_name = "sca_scanner_agent"
   description        = "Scanner Agent — GitHub OAuth access for Dependabot alerts and source code"
   role_arn           = aws_iam_role.agentcore_runtime.arn
 
@@ -196,7 +196,7 @@ resource "aws_bedrockagentcore_agent_runtime" "scanner" {
 }
 
 resource "aws_bedrockagentcore_agent_runtime" "analysis" {
-  agent_runtime_name = "${var.project_name}-${var.environment}-analysis-agent"
+  agent_runtime_name = "sca_analysis_agent"
   description        = "Analysis Agent — tree-sitter call graph, exploitability scoring, fix recommendations"
   role_arn           = aws_iam_role.agentcore_runtime.arn
 

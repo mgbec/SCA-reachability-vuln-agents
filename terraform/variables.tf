@@ -48,28 +48,28 @@ variable "log_retention_days" {
 variable "github_oauth_client_id" {
   description = "GitHub OAuth client ID for Scanner Agent"
   type        = string
-  default     = ""
+  default     = "placeholder"
   sensitive   = true
 }
 
 variable "github_oauth_client_secret" {
   description = "GitHub OAuth client secret for Scanner Agent"
   type        = string
-  default     = ""
+  default     = "placeholder"
   sensitive   = true
 }
 
 variable "m2m_client_id" {
   description = "M2M OAuth client ID for Analysis Agent"
   type        = string
-  default     = ""
+  default     = "placeholder"
   sensitive   = true
 }
 
 variable "m2m_client_secret" {
   description = "M2M OAuth client secret for Analysis Agent"
   type        = string
-  default     = ""
+  default     = "placeholder"
   sensitive   = true
 }
 
