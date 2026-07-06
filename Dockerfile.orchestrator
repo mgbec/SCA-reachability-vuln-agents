@@ -1,21 +1,14 @@
-FROM python:3.13-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc && \
-    rm -rf /var/lib/apt/lists/*
-
-# Copy dependency definition and install
+# Copy everything needed for install
 COPY pyproject.toml .
-RUN pip install --no-cache-dir .
-
-# Copy application source
 COPY src/ src/
+
+# Install the package and dependencies (all have arm64 wheels)
+RUN pip install --no-cache-dir .
 
 EXPOSE 8080
 
-# Entry point: orchestrator agent handler
-# AgentCore Runtime invokes the handler function
 CMD ["python", "-m", "src.agents.orchestrator"]

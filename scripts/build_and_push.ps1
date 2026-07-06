@@ -22,15 +22,15 @@ aws ecr get-login-password --region $Region | docker login --username AWS --pass
 
 Write-Host ""
 Write-Host "==> Building orchestrator image..." -ForegroundColor Cyan
-docker build -t sca-orchestrator:latest -f Dockerfile.orchestrator .
+docker build --platform linux/arm64 -t sca-orchestrator:latest -f Dockerfile.orchestrator .
 
 Write-Host ""
 Write-Host "==> Building scanner image..." -ForegroundColor Cyan
-docker build -t sca-scanner:latest -f Dockerfile.scanner .
+docker build --platform linux/arm64 -t sca-scanner:latest -f Dockerfile.scanner .
 
 Write-Host ""
 Write-Host "==> Building analysis image..." -ForegroundColor Cyan
-docker build -t sca-analysis:latest -f Dockerfile.analysis .
+docker build --platform linux/arm64 -t sca-analysis:latest -f Dockerfile.analysis .
 
 Write-Host ""
 Write-Host "==> Tagging images..." -ForegroundColor Cyan

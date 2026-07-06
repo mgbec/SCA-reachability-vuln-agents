@@ -6,7 +6,6 @@ output "cognito_user_pool_endpoint" {
 output "cognito_client_id" {
   description = "Cognito user pool client ID for OAuth flows"
   value       = module.cognito.client_id
-  sensitive   = true
 }
 
 output "orchestrator_agent_runtime_arn" {

@@ -8,6 +8,7 @@ Tests the Click-based CLI application covering:
 """
 
 import os
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -139,10 +140,17 @@ class TestGatherEnvVars:
 
 
 class TestAuthenticateCommand:
-    """Tests for OAuth 2.1 Device Authorization Grant and legacy mode."""
+    """Tests for OAuth 2.1 Authorization Code + PKCE and legacy mode."""
 
-    def test_authenticate_uses_device_flow_by_default(self, runner):
-        """Default authenticate uses Device Authorization Grant (no password prompts)."""
+    @patch("src.cli.workflows.authenticate_with_browser")
+    def test_authenticate_uses_browser_flow_by_default(self, mock_auth, runner):
+        """Default authenticate uses browser-based Authorization Code + PKCE."""
+        mock_auth.return_value = {
+            "id_token": "eyJ.test.token",
+            "access_token": "eyJ.access.token",
+            "refresh_token": "refresh-token",
+            "expires_in": 3600,
+        }
         env = {
             "AGENTCORE_COGNITO_ENDPOINT": "http://cognito.example.com",
             "AGENTCORE_COGNITO_CLIENT_ID": "test-client-id",
@@ -153,10 +161,17 @@ class TestAuthenticateCommand:
             env=env,
         )
         assert result.exit_code == 0
-        assert "Device Authorization Grant" in result.output
+        assert "Authorization Code + PKCE" in result.output
 
-    def test_authenticate_device_flow_displays_verification_steps(self, runner):
-        """Device flow displays verification URI instructions."""
+    @patch("src.cli.workflows.authenticate_with_browser")
+    def test_authenticate_browser_flow_displays_steps(self, mock_auth, runner):
+        """Browser flow displays step numbering."""
+        mock_auth.return_value = {
+            "id_token": "eyJ.test.token",
+            "access_token": "eyJ.access.token",
+            "refresh_token": "refresh-token",
+            "expires_in": 3600,
+        }
         env = {
             "AGENTCORE_COGNITO_ENDPOINT": "http://cognito.example.com",
             "AGENTCORE_COGNITO_CLIENT_ID": "test-client-id",
@@ -169,7 +184,7 @@ class TestAuthenticateCommand:
         assert result.exit_code == 0
         # Should show workflow step numbering
         assert "[1]" in result.output
-        assert "Device Code" in result.output or "device" in result.output.lower()
+        assert "Open Browser" in result.output
 
     def test_authenticate_legacy_flag_shows_deprecation_warning(self, runner):
         """--legacy flag triggers deprecation warning about ROPC removal."""

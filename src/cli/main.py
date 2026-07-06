@@ -130,16 +130,16 @@ def cli(
 )
 @click.pass_context
 def authenticate(ctx: click.Context, legacy: bool, username: str | None, password: str | None) -> None:
-    """Authenticate using Device Authorization Grant (OAuth 2.1).
+    """Authenticate using Authorization Code flow with PKCE (OAuth 2.1).
 
-    By default, uses the Device Authorization Grant (RFC 8628): requests a
-    device code, displays a verification URI and user code, and polls
-    until the user authorizes in their browser. No passwords are transmitted.
+    By default, opens your browser to the Cognito hosted UI for login.
+    After you authenticate, the CLI captures the authorization code via
+    a localhost redirect and exchanges it for tokens using PKCE.
 
     The --legacy flag preserves backward-compatible username/password auth
     with a deprecation warning (ROPC removed in OAuth 2.1).
     """
-    from src.cli.workflows import run_device_authorization_workflow, run_user_authentication_workflow
+    from src.cli.workflows import run_browser_authorization_workflow, run_user_authentication_workflow
 
     verbose = ctx.obj["verbose"]
     config = ctx.obj["config"]
@@ -164,7 +164,7 @@ def authenticate(ctx: click.Context, legacy: bool, username: str | None, passwor
         click.echo(
             "WARNING: --username/--password authentication is deprecated. "
             "OAuth 2.1 removes the Resource Owner Password Credentials grant. "
-            "Use the default Device Authorization Grant instead.",
+            "Use the default browser-based Authorization Code flow instead.",
             err=True,
         )
         if not username:
@@ -175,8 +175,8 @@ def authenticate(ctx: click.Context, legacy: bool, username: str | None, passwor
         ctx.obj["password"] = password
         run_user_authentication_workflow(config, username, password, verbose)
     else:
-        # OAuth 2.1 Device Authorization Grant (default)
-        run_device_authorization_workflow(config, verbose)
+        # OAuth 2.1 Authorization Code + PKCE (default)
+        run_browser_authorization_workflow(config, verbose)
 
 
 @cli.command()

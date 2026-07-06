@@ -11,7 +11,7 @@ variable "environment" {
 variable "callback_urls" {
   description = "Allowed OAuth 2.0 callback URLs for the user pool client"
   type        = list(string)
-  default     = ["http://localhost:8080/callback"]
+  default     = ["http://localhost:8080/callback", "http://localhost:8910/callback"]
 }
 
 variable "logout_urls" {

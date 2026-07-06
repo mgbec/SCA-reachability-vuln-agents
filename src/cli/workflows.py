@@ -27,6 +27,8 @@ import httpx
 
 from src.core.masking import mask_authorization_header, mask_sensitive
 
+from src.cli.auth_flow import _AuthorizationError, authenticate_with_browser
+
 
 # --- Workflow Step Tracking ---
 
@@ -262,6 +264,149 @@ def run_device_authorization_workflow(
     if jwt_token:
         step4.success = True
         step4.details = "JWT token acquired via Device Authorization Grant"
+        if verbose:
+            step4.verbose_data = _decode_jwt_for_display(jwt_token)
+    else:
+        step4.success = False
+        step4.error = "No JWT token received"
+
+    _display_step(step4, verbose)
+    steps.append(step4)
+
+    return steps
+
+
+def run_browser_authorization_workflow(
+    config: dict,
+    verbose: bool,
+) -> list[WorkflowStep]:
+    """Demonstrate browser-based Authorization Code flow with PKCE.
+
+    Opens the user's default browser to the Cognito hosted UI, waits for
+    the authorization callback on a localhost server, then exchanges the
+    code for tokens using PKCE.
+
+    Steps:
+    1. Open Browser (authorization URL with PKCE challenge)
+    2. Waiting for Authorization (localhost callback server)
+    3. Token Exchange (code + code_verifier → tokens)
+    4. JWT Acquired
+
+    Args:
+        config: Resolved CLI configuration.
+        verbose: Whether to display verbose output.
+
+    Returns:
+        List of WorkflowStep results.
+    """
+    steps: list[WorkflowStep] = []
+    cognito_endpoint = config.get("cognito_endpoint", "")
+    cognito_client_id = config.get("cognito_client_id", "")
+
+    click.echo("\n=== Workflow: Authorization Code + PKCE (Browser) ===\n")
+
+    # Step 1: Open Browser
+    step1 = WorkflowStep(
+        step_number=1,
+        stage_name="Open Browser",
+        details="Opening browser to Cognito hosted UI for authentication",
+        verbose_data={
+            "cognito_endpoint": cognito_endpoint,
+            "client_id": cognito_client_id,
+            "flow": "authorization_code + PKCE (S256)",
+            "redirect_uri": "http://localhost:8910/callback",
+        },
+    )
+
+    if not cognito_endpoint or not cognito_client_id:
+        step1.success = False
+        step1.error = "Cognito endpoint or client ID not configured"
+        _display_step(step1, verbose)
+        steps.append(step1)
+        return steps
+
+    _display_step(step1, verbose)
+    steps.append(step1)
+
+    # Step 2: Waiting for Authorization
+    step2 = WorkflowStep(
+        step_number=2,
+        stage_name="Waiting for Authorization",
+        details="Listening on localhost for OAuth callback (120s timeout)",
+        verbose_data={
+            "callback_server": "http://localhost:8910/callback",
+            "timeout_seconds": 120,
+            "pkce_method": "S256",
+        },
+    )
+    _display_step(step2, verbose)
+    steps.append(step2)
+
+    # Perform the actual browser-based auth flow
+    tokens = None
+    try:
+        tokens = authenticate_with_browser(
+            cognito_endpoint=cognito_endpoint,
+            client_id=cognito_client_id,
+            verbose=verbose,
+        )
+    except TimeoutError as e:
+        step3 = WorkflowStep(
+            step_number=3,
+            stage_name="Token Exchange",
+            success=False,
+            error=str(e),
+        )
+        _display_step(step3, verbose)
+        steps.append(step3)
+        return steps
+    except _AuthorizationError as e:
+        step3 = WorkflowStep(
+            step_number=3,
+            stage_name="Token Exchange",
+            success=False,
+            error=str(e),
+        )
+        _display_step(step3, verbose)
+        steps.append(step3)
+        return steps
+    except Exception as e:
+        step3 = WorkflowStep(
+            step_number=3,
+            stage_name="Token Exchange",
+            success=False,
+            error=f"Unexpected error: {e}",
+        )
+        _display_step(step3, verbose)
+        steps.append(step3)
+        return steps
+
+    # Step 3: Token Exchange
+    step3 = WorkflowStep(
+        step_number=3,
+        stage_name="Token Exchange",
+        success=True,
+        details="Authorization code exchanged for tokens via PKCE",
+        verbose_data={
+            "token_endpoint": f"{cognito_endpoint}/oauth2/token",
+            "grant_type": "authorization_code",
+            "pkce_verified": True,
+            "expires_in": tokens.get("expires_in"),
+        },
+    )
+    _display_step(step3, verbose)
+    steps.append(step3)
+
+    # Step 4: JWT Acquired
+    jwt_token = tokens.get("id_token") or tokens.get("access_token", "")
+    step4 = WorkflowStep(
+        step_number=4,
+        stage_name="JWT Acquired",
+    )
+
+    if jwt_token:
+        step4.success = True
+        step4.details = "JWT token acquired via Authorization Code + PKCE"
         if verbose:
             step4.verbose_data = _decode_jwt_for_display(jwt_token)
     else:
