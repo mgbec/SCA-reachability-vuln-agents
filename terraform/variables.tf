@@ -78,23 +78,3 @@ variable "m2m_token_endpoint_issuer" {
   type        = string
   default     = "https://auth.vulnerability-db.example.com"
 }
-
-# --- Container URIs ---
-
-variable "orchestrator_container_uri" {
-  description = "ECR container URI for the Orchestrator Agent"
-  type        = string
-  default     = ""
-}
-
-variable "scanner_container_uri" {
-  description = "ECR container URI for the Scanner Agent"
-  type        = string
-  default     = ""
-}
-
-variable "analysis_container_uri" {
-  description = "ECR container URI for the Analysis Agent"
-  type        = string
-  default     = ""
-}

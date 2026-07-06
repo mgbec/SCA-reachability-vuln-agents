@@ -65,19 +65,24 @@ variable "m2m_token_endpoint_issuer" {
 variable "orchestrator_container_uri" {
   description = "ECR container URI for the Orchestrator Agent"
   type        = string
-  default     = ""
 }
 
 variable "scanner_container_uri" {
   description = "ECR container URI for the Scanner Agent"
   type        = string
-  default     = ""
 }
 
 variable "analysis_container_uri" {
   description = "ECR container URI for the Analysis Agent"
   type        = string
-  default     = ""
+}
+
+# --- ECR Repository ARNs (for IAM policy) ---
+
+variable "ecr_repository_arns" {
+  description = "List of ECR repository ARNs the runtime role needs pull access to"
+  type        = list(string)
+  default     = []
 }
 
 # --- Tags ---

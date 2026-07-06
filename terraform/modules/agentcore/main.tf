@@ -40,6 +40,32 @@ resource "aws_iam_role" "agentcore_runtime" {
   })
 }
 
+# ECR pull permissions for AgentCore Runtime
+data "aws_iam_policy_document" "ecr_pull" {
+  statement {
+    sid       = "ECRGetAuthorizationToken"
+    effect    = "Allow"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ECRPullImages"
+    effect = "Allow"
+    actions = [
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
+    ]
+    resources = var.ecr_repository_arns
+  }
+}
+
+resource "aws_iam_role_policy" "ecr_pull" {
+  name   = "${var.project_name}-${var.environment}-ecr-pull"
+  role   = aws_iam_role.agentcore_runtime.id
+  policy = data.aws_iam_policy_document.ecr_pull.json
+}
+
 # =============================================================================
 # Workload Identities
 # =============================================================================

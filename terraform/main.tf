@@ -48,6 +48,13 @@ module "secrets" {
   environment  = var.environment
 }
 
+module "ecr" {
+  source = "./modules/ecr"
+
+  project_name = var.project_name
+  environment  = var.environment
+}
+
 module "agentcore" {
   source = "./modules/agentcore"
 
@@ -69,9 +76,16 @@ module "agentcore" {
   m2m_token_endpoint_issuer = var.m2m_token_endpoint_issuer
 
   # Container URIs (ECR)
-  orchestrator_container_uri = var.orchestrator_container_uri
-  scanner_container_uri      = var.scanner_container_uri
-  analysis_container_uri     = var.analysis_container_uri
+  orchestrator_container_uri = "${module.ecr.orchestrator_repository_url}:latest"
+  scanner_container_uri      = "${module.ecr.scanner_repository_url}:latest"
+  analysis_container_uri     = "${module.ecr.analysis_repository_url}:latest"
+
+  # ECR repository ARNs (for IAM policy)
+  ecr_repository_arns = [
+    module.ecr.orchestrator_repository_arn,
+    module.ecr.scanner_repository_arn,
+    module.ecr.analysis_repository_arn,
+  ]
 }
 
 module "observability" {
