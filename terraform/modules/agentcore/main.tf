@@ -253,3 +253,41 @@ resource "aws_bedrockagentcore_agent_runtime" "analysis" {
     Agent     = "analysis-agent"
   })
 }
+
+# =============================================================================
+# AgentCore Agent Runtime Endpoints
+# =============================================================================
+# Each runtime needs an endpoint to be network-accessible for invocation.
+
+resource "aws_bedrockagentcore_agent_runtime_endpoint" "orchestrator" {
+  name             = "sca_orchestrator_endpoint"
+  agent_runtime_id = aws_bedrockagentcore_agent_runtime.orchestrator.agent_runtime_id
+  description      = "Public endpoint for Orchestrator Agent invocation"
+
+  tags = merge(var.tags, {
+    Component = "agentcore-endpoint"
+    Agent     = "orchestrator-agent"
+  })
+}
+
+resource "aws_bedrockagentcore_agent_runtime_endpoint" "scanner" {
+  name             = "sca_scanner_endpoint"
+  agent_runtime_id = aws_bedrockagentcore_agent_runtime.scanner.agent_runtime_id
+  description      = "Public endpoint for Scanner Agent invocation"
+
+  tags = merge(var.tags, {
+    Component = "agentcore-endpoint"
+    Agent     = "scanner-agent"
+  })
+}
+
+resource "aws_bedrockagentcore_agent_runtime_endpoint" "analysis" {
+  name             = "sca_analysis_endpoint"
+  agent_runtime_id = aws_bedrockagentcore_agent_runtime.analysis.agent_runtime_id
+  description      = "Public endpoint for Analysis Agent invocation"
+
+  tags = merge(var.tags, {
+    Component = "agentcore-endpoint"
+    Agent     = "analysis-agent"
+  })
+}

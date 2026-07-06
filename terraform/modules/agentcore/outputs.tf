@@ -48,3 +48,20 @@ output "analysis_credential_provider_arn" {
   description = "ARN of the Analysis Agent's M2M credential provider"
   value       = aws_bedrockagentcore_oauth2_credential_provider.analysis_m2m.credential_provider_arn
 }
+
+# --- Endpoint ARNs ---
+
+output "orchestrator_endpoint_arn" {
+  description = "ARN of the Orchestrator Agent Runtime Endpoint"
+  value       = aws_bedrockagentcore_agent_runtime_endpoint.orchestrator.agent_runtime_endpoint_arn
+}
+
+output "scanner_endpoint_arn" {
+  description = "ARN of the Scanner Agent Runtime Endpoint"
+  value       = aws_bedrockagentcore_agent_runtime_endpoint.scanner.agent_runtime_endpoint_arn
+}
+
+output "analysis_endpoint_arn" {
+  description = "ARN of the Analysis Agent Runtime Endpoint"
+  value       = aws_bedrockagentcore_agent_runtime_endpoint.analysis.agent_runtime_endpoint_arn
+}

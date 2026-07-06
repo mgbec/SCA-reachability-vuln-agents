@@ -27,3 +27,18 @@ output "workload_identity_arns" {
   description = "Map of agent names to their workload identity ARNs"
   value       = module.agentcore.workload_identity_arns
 }
+
+output "orchestrator_endpoint_arn" {
+  description = "Orchestrator Agent Runtime Endpoint ARN"
+  value       = module.agentcore.orchestrator_endpoint_arn
+}
+
+output "scanner_endpoint_arn" {
+  description = "Scanner Agent Runtime Endpoint ARN"
+  value       = module.agentcore.scanner_endpoint_arn
+}
+
+output "analysis_endpoint_arn" {
+  description = "Analysis Agent Runtime Endpoint ARN"
+  value       = module.agentcore.analysis_endpoint_arn
+}
