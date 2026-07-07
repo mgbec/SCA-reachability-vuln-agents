@@ -20,19 +20,18 @@ try {
     $env:AGENTCORE_COGNITO_ENDPOINT = terraform output -raw cognito_user_pool_endpoint 2>$null
     $env:AGENTCORE_COGNITO_CLIENT_ID = terraform output -raw cognito_client_id 2>$null
 
-    # Agent Runtime Endpoint ARNs (used to derive invoke URLs)
-    $orchestratorId = terraform output -raw orchestrator_agent_runtime_id 2>$null
-    $scannerId = terraform output -raw scanner_agent_runtime_id 2>$null
-    $analysisId = terraform output -raw analysis_agent_runtime_id 2>$null
-
     # Construct invoke URLs from runtime IDs
-    # AgentCore Runtime endpoint format: https://bedrock-agentcore.{region}.amazonaws.com/runtimes/{id}/invoke
+    # API: POST https://bedrock-agentcore.{region}.amazonaws.com/runtimes/{agentRuntimeArn}/invocations
     $region = "us-east-1"
     $baseUrl = "https://bedrock-agentcore.${region}.amazonaws.com"
 
-    $env:AGENTCORE_ORCHESTRATOR_ENDPOINT = "${baseUrl}/runtimes/${orchestratorId}"
-    $env:AGENTCORE_SCANNER_ENDPOINT = "${baseUrl}/runtimes/${scannerId}"
-    $env:AGENTCORE_ANALYSIS_ENDPOINT = "${baseUrl}/runtimes/${analysisId}"
+    $orchestratorArn = terraform output -raw orchestrator_agent_runtime_arn 2>$null
+    $scannerArn = terraform output -raw scanner_agent_runtime_arn 2>$null
+    $analysisArn = terraform output -raw analysis_agent_runtime_arn 2>$null
+
+    $env:AGENTCORE_ORCHESTRATOR_ENDPOINT = "${baseUrl}/runtimes/${orchestratorArn}/invocations"
+    $env:AGENTCORE_SCANNER_ENDPOINT = "${baseUrl}/runtimes/${scannerArn}/invocations"
+    $env:AGENTCORE_ANALYSIS_ENDPOINT = "${baseUrl}/runtimes/${analysisArn}/invocations"
 }
 finally {
     Pop-Location
