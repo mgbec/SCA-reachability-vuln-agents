@@ -13,14 +13,29 @@ output "orchestrator_agent_runtime_arn" {
   value       = module.agentcore.orchestrator_agent_runtime_arn
 }
 
+output "orchestrator_agent_runtime_id" {
+  description = "Orchestrator Agent Runtime ID"
+  value       = module.agentcore.orchestrator_agent_runtime_id
+}
+
 output "scanner_agent_runtime_arn" {
   description = "Scanner Agent Runtime ARN"
   value       = module.agentcore.scanner_agent_runtime_arn
 }
 
+output "scanner_agent_runtime_id" {
+  description = "Scanner Agent Runtime ID"
+  value       = module.agentcore.scanner_agent_runtime_id
+}
+
 output "analysis_agent_runtime_arn" {
   description = "Analysis Agent Runtime ARN"
   value       = module.agentcore.analysis_agent_runtime_arn
+}
+
+output "analysis_agent_runtime_id" {
+  description = "Analysis Agent Runtime ID"
+  value       = module.agentcore.analysis_agent_runtime_id
 }
 
 output "workload_identity_arns" {
